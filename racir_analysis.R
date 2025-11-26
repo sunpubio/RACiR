@@ -9,7 +9,6 @@ library(nleqslv)
 library(Li6800fixer)
 
 # Folder setting ----------------------------------------------------------
-
 getwd()
 
 broad_dir <- "data/broad"
@@ -20,26 +19,50 @@ list_conifer <- list.dirs(conifer_dir, full.names = T, recursive = F)
 
 
 
-# df setting --------------------------------------------------------------
-
+# df list setting --------------------------------------------------------------
 Judge_df <- tibble()
 summarise_df <- tibble()
+plot_list <- list()
+
+# parameter setting -------------------------------------------------------
+temp.res <- function(p25, C, dH, t) exp(C-dH*1000/((t+273)*8.314))
+g <- function(t) temp.res(42.75, 19.02, 37.83, t)
+Kc <- function(t) temp.res(404.9, 38.05, 79.43, t)
+Ko<- function(t) temp.res(278.4, 30.30, 36.38, t)
+Vc <- function(t) temp.res(1, 26.35, 65.33, t)
+Vo <- function(t) temp.res(1, 22.98, 60.11, t)
+J <- function(t) temp.res(1, 17.71, 43.9, t)
+Rd_25 <- function(t) temp.res(1, 18.72, 46.49, t)
+K <- function(t) Kc(t)/(1+200*1000/Ko(t))
+O2 <- 210
+
 
 # Conifer -----------------------------------------------------------------
 
 for (i in list_conifer) {
   
+  print(i)
+  
   all_files <- list.files(i, full.names = T, recursive = F) %>% .[!grepl("\\.xlsx?$", .)]
   aci_files <- all_files[grepl("\\_ACi", all_files)]
   area_files <- all_files[grepl("\\.csv", all_files)]
   
-  area_file <- read.csv(area_files, header=T) %>% 
+  library(dplyr)
+  
+  area_file <- read.csv(area_files, header = TRUE) %>% 
     mutate(
-    leaf = sub("_[0-9]{8}_.*$", "", File), 　#
-    area_m2 = Area_mm2 / 1e6
-  )
+      # ① 日付以降があれば削る（なければそのまま）
+      leaf = sub("_[0-9]{8}_.*$", "", File),
+      # ② 拡張子（.jpg, .png など）を削る
+      leaf = sub("\\.[^.]+$", "", leaf),
+      # ③ mm^2 → m^2
+      area_m2 = Area_mm2 / 1e6
+    )
+  
   
   for (m in aci_files) {
+    
+    print(m)
     
     ACi_data <- read_6800(m)
     plant_name <- str_extract(m, "[^/]+(?=_ACi)")
@@ -116,8 +139,8 @@ for (i in list_conifer) {
     if(Judging$判定[[1]] == "TRUE"){##########################################################################################################
       
       pre_data <- fixed_ACi_data %>% select(A, Ci)
-      Rubisco_data <- pre_data[1:Judging[1,2],]
-      RuBP_data <- pre_data[nrow(pre_data)-as.numeric(Judging[1,3])+1:nrow(pre_data),]
+      Rubisco_data <- pre_data[1:as.numeric(Judging[1,2]),]
+      RuBP_data <- pre_data[nrow(pre_data)-as.numeric(as.numeric(Judging[1,3]))+1:nrow(pre_data),]
       RuBP_data <- na.omit(RuBP_data)
       Ci_range <- seq(0, 1500, by = 1)
       
