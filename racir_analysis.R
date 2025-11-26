@@ -7,9 +7,6 @@ library(ggplot2)
 library(minpack.lm)
 library(nleqslv)
 library(Li6800fixer)
-print("Hello")
-
-
 
 # Folder setting ----------------------------------------------------------
 
@@ -22,50 +19,45 @@ list_broadleaf <- list.dirs(broad_dir, full.names = T, recursive = F)
 list_conifer <- list.dirs(conifer_dir, full.names = T, recursive = F)
 
 
+
+# df setting --------------------------------------------------------------
+
+Judge_df <- tibble()
+summarise_df <- tibble()
+
 # Conifer -----------------------------------------------------------------
 
 for (i in list_conifer) {
-  i="data/conifer/Karamatsu"
   
   all_files <- list.files(i, full.names = T, recursive = F) %>% .[!grepl("\\.xlsx?$", .)]
   aci_files <- all_files[grepl("\\_ACi", all_files)]
-  area_file <- 
+  area_files <- all_files[grepl("\\.csv", all_files)]
+  
+  area_file <- read.csv(area_files, header=T) %>% 
+    mutate(
+    leaf = sub("_[0-9]{8}_.*$", "", File), 　#
+    area_m2 = Area_mm2 / 1e6
+  )
   
   for (m in aci_files) {
-    
-    m="data/conifer/Karamatsu/Karamatsu_1_ACi"
     
     ACi_data <- read_6800(m)
     plant_name <- str_extract(m, "[^/]+(?=_ACi)")
     ACi_data$PlantID <- plant_name
     
+    area <- area_file %>% 
+      filter(leaf == plant_name) %>% 
+      pull(area_m2)
     
-    # ACiデータ再計算
-    area <- read.csv("leaf_area_manual_petiole_area.csv", header = TRUE) %>%
-      mutate(
-        # ab_数字_数字_数字 または ab_数字_ACi を抽出
-        Leafname = str_extract(File, plant_name),
-        str_extract()
-        # Area を m² に変換
-        Area_m2 = Area_mm2 / 1000000
-      )
+    fixed_ACi_data <- fixarea_6800(ACi_data, area)
     
-    
-    
-    
-    
-    
-    
-    names(ACi_data) <- make.unique(names(ACi_data))
-    
-    Judge_df <- data.frame(NULL)#Vcmax,Jmax用
     
     # 葉温決定
     t <- mean(ACi_data$Tleaf)
     
-    for (j in 2:(nrow(ACi_data)-1)) {　　#点2つじゃ回帰出来なかったため、3つから行う。
-      subset_data1 <- ACi_data[1:j, ] # 最初からi番目までのデータを取得
-      subset_data2 <- ACi_data[(j + 1):nrow(ACi_data), ] # i+1番目から最後までのデータを取得
+    for (j in 2:(nrow(fixed_ACi_data)-1)) {　　#点2つじゃ回帰出来なかったため、3つから行う。
+      subset_data1 <- fixed_ACi_data[1:j, ] # 最初からi番目までのデータを取得
+      subset_data2 <- fixed_ACi_data[(j + 1):nrow(fixed_ACi_data), ] # i+1番目から最後までのデータを取得
       print(j)
       
       
@@ -110,7 +102,7 @@ for (i in list_conifer) {
       
       #結果をデータフレームに入れていく。（.はパイプの中の前のやつを挿す）
       Judge_df <-
-        data.frame(kind = i, Rubisco = j, RuBP = nrow(ACi_data)-j, 判定 = judge,　RMSE = T_RMSE) %>% 
+        data.frame(kind = i, Rubisco = j, RuBP = nrow(fixed_ACi_data)-j, 判定 = judge,　RMSE = T_RMSE) %>% 
         bind_rows(Judge_df, .)
       
       #結果出力
@@ -123,7 +115,7 @@ for (i in list_conifer) {
     
     if(Judging$判定[[1]] == "TRUE"){##########################################################################################################
       
-      pre_data <- ACi_data %>% select(A, Ci)
+      pre_data <- fixed_ACi_data %>% select(A, Ci)
       Rubisco_data <- pre_data[1:Judging[1,2],]
       RuBP_data <- pre_data[nrow(pre_data)-as.numeric(Judging[1,3])+1:nrow(pre_data),]
       RuBP_data <- na.omit(RuBP_data)
@@ -199,7 +191,7 @@ for (i in list_conifer) {
         geom_line(data = out_data_2, aes(x=Ci, y=A), color = "#339900", linewidth=1.5, show.legend = F, alpha = 0.2)+
         scale_color_manual(values = c("Rubisco limitation" = "#ff9900",
                                       "RuBP limitation" = "#339900"))+
-        geom_point(data = ACi_data, aes(x=Ci, y=A))+
+        geom_point(data = fixed_ACi_data, aes(x=Ci, y=A))+
         geom_point(data = Ci_transition, aes(x=Ci, y=A), size=3.0, fill = "#ffd700", shape = 21)+
         labs(title = plant_name,
              x = expression(paste(italic(C)[i], " (", mu*mol, " ", {mol}^-1, ")")),
@@ -228,7 +220,7 @@ for (i in list_conifer) {
     }
     else{ #######################################################################################################################
       
-      pre_data <- ACi_data %>% select(A, Ci)
+      pre_data <- fixed_ACi_data %>% select(A, Ci)
       Rubisco_data <- pre_data[1:5,]
       RuBP_data <- pre_data[5+1:nrow(pre_data),]
       RuBP_data <- na.omit(RuBP_data)
@@ -304,15 +296,15 @@ for (i in list_conifer) {
         geom_line(data = out_data_2, aes(x=Ci, y=A), color = "#339900", linewidth=1.5, show.legend = F, alpha = 0.2)+
         scale_color_manual(values = c("Rubisco limitation" = "#ff9900",
                                       "RuBP limitation" = "#339900"))+
-        geom_point(data = ACi_data, aes(x=Ci, y=A))+
+        geom_point(data = fixed_ACi_data, aes(x=Ci, y=A))+
         geom_point(data = Ci_transition, aes(x=Ci, y=A), size=3.0, fill = "#ffd700", shape = 21)+
         labs(title = plant_name,
              x = expression(paste(italic(C)[i], " (", mu*mol, " ", {mol}^-1, ")")),
              y = expression(paste(italic(A), " (", mu*mol, " ", {{m}^-2}, " ",{s}^-1, ")")))+
         scale_x_continuous(breaks = seq(0, max(filtered_data_2$Ci+100), by = 300))+
         scale_y_continuous(breaks = seq(-5, max(filtered_data_2$A+5), by =5))+
-        xlim(0,max(ACi_data$Ci+100))+
-        ylim(-5,max(ACi_data$A+5))+
+        xlim(0,max(fixed_ACi_data$Ci+100))+
+        ylim(-5,max(fixed_ACi_data$A+5))+
         annotate("text",
                  x = intersection_Ci,
                  y = intersection_A,
