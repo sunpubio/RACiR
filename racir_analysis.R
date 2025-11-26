@@ -7,6 +7,8 @@ library(ggplot2)
 library(minpack.lm)
 library(nleqslv)
 library(Li6800fixer)
+print("Hello")
+
 
 
 # Folder setting ----------------------------------------------------------
