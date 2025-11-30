@@ -350,9 +350,222 @@ for (i in list_conifer) {
   }
 }
 
-
+print(summarise_df)
 
 # RACiR conifer -----------------------------------------------------------
+
+# file setting
+file_path <- "C:/Users/sabo/OneDrive - The University of Tokyo/研究/光合成能力推定手法/RACiR/test/data/conifer"
+
+patterns <- c("50", "100", "200", "300", "400")
+plot_racir_list <- list()
+racir_df <- data.frame()
+cal_time_plot <- list()
+
+
+for (i in list_conifer) {
+  
+  
+# どの葉なのか
+  print(i)
+  
+  all_files <- list.files(i, full.names = T, recursive = F) %>% .[!grepl("\\.xlsx?$", .)]
+  area_files <- all_files[grepl("\\.csv", all_files)]
+  
+　# 50, 100, 200, 300, 400で繰り返す
+  for (pattern in patterns) {
+    
+    # patternに合うファイルを選ぶ
+    matching_files <- all_files[grepl(pattern, all_files)]
+    
+    # calibrationとdataのファイルを分ける
+    cal_der <- matching_files[grepl("\\_cal", matching_files)]
+    data_der <- matching_files[-grepl("\\_cal", matching_files)]
+
+    # calのセッティング
+    caldata <- read_6800(cal_der)
+    names(caldata) <- make.unique(names(caldata))
+    n <- nrow(caldata)
+    
+    # 面積を修正
+    area <- area_file %>% 
+      filter(leaf == plant_name) %>% 
+      pull(area_m2)
+    
+    caldata <- fixarea_6800(caldata, area)
+    
+    
+    caldata$delta <- NA
+    
+    if (n > 1) {  # 行数が2以上であることを確認
+      caldata$delta[2:n] <- caldata$A[2:n] - caldata$A[1:(n - 1)]
+    }
+    
+    # calibrationの回帰に使うデータを選ぶ
+    filtered_data <- caldata[abs(caldata$delta) <= 0.01 & caldata$CO2_r <= 400 & caldata$CO2_r >=50, c("obs", "CO2_r", "A", "delta")]
+
+    
+    ## ここから作図のための処理-------------------------------------------------------------
+    　　cal <- caldata %>% 
+      　　select(obs, delta, CO2_r, CO2_s, A, hhmmss)
+    
+    　　cal$hhmmss <- hms(cal$hhmmss)
+    
+    # obs=1の時刻を基準（0秒）に設定
+    　　cal$seconds <- as.numeric(cal$hhmmss - cal$hhmmss[cal$obs == 1])
+    
+    #空のチャンバーでCO2を下げているデータ
+    　　{ggplot()+
+        geom_point(data =cal, aes(x=CO2_r, y=A))}
+    
+    #空のチャンバーでCO2_sとCO2_rで時間差があるという図を見ぜる
+    {　　ggplot()+
+    　   　 geom_point(data = cal, aes(x=seconds, y=CO2_r),
+                   colour = "darkgreen")+
+       　 geom_point(data = cal, aes(x=seconds, y=CO2_s),
+                   colour= "lightgreen")+
+        　labs(title = "Lags between the reference [CO2] and sample [CO2]",
+             x= paste("time", " (s)"),
+             y= expression(paste("[", italic(CO)[2], "]",  "  (", mu*mol, " ", {mol}^-1, ")")))+
+       　 scale_color_manual(values = c("CO2_r" = "darkgreen", "CO2_s" = "lightgreen"))+
+       　 theme_bw(base_size =16)}
+    
+   　　 df_long <- tidyr::pivot_longer(cal, cols = c(CO2_r, CO2_s), names_to = "type", values_to = "value")
+    
+    
+    # ggplotでプロット
+   　　 {cal_plot <- 
+       　　 ggplot(df_long, aes(x = seconds, y = value, colour = type)) +
+       　　 geom_point() +
+       　　 labs(title = bquote(paste("Lags between the reference ", "[", italic(CO)[2],"]",  " and sample", "[", italic(CO)[2], "]", "  RR:", .(pattern))),
+             x = "time (s)",
+             y = expression(paste("[", italic(CO)[2], "]",  "  (", mu*mol, " ", {mol}^-1, ")")),
+             colour = NULL) +
+       　　 scale_color_manual(labels = c(expression(paste(italic(CO)[2], "_r")), expression(paste(italic(CO)[2], "_s"))),
+                           values = c("darkgreen", "lightgreen")) +
+       　　 theme_light(base_size = 16)+
+       　　 theme(panel.border = element_rect(colour = "black", fill = NA, linewidth = 2),
+              legend.position = c(0.85, 0.85))}
+    
+    
+    #Ai-Ai-1をしてδにしたデータ
+    　　{ggplot()+
+       　　 geom_point(data = cal, aes(x=CO2_r, y=delta))+
+       　　 geom_point(data = filtered_data, aes(x=CO2_r, y=delta, alpha=0.1), colour = "red", show.legend = F)+
+       　　 ggtitle("filterd_delta")}
+   
+   　　 ggplot()+
+      　　geom_point(data = cal, aes(x=CO2_r, y=A))+
+     　　 geom_point(data = filtered_data, aes(x=CO2_r, y=A), colour = "red")
+   
+   ## ここまで作図----------------------------------------------------------------------------
+    
+   
+   # キャリブレーション用のモデルを回す
+    quadratic_model <- lm(A ~ poly(CO2_r, 1, raw = TRUE), data = filtered_data)
+    
+    
+    # モデルが作成されたかどうかを確認
+    if (nrow(filtered_data) <2) {
+      message("エラーが発生しました。処理をスキップします。")
+      
+      # モデルが作れなかった時の処理
+      for (m in seq_along(data_der)) {
+        print(m)
+        file <- data_der[m]
+        data_data <- read_6800(file)
+        names(data_data) <- make.unique(names(data_data))
+        
+        plant_name <- str_extract(
+          file,
+          paste0("[^/]+(?=_", pattern, "$)")  # ここで ) を足す
+        )
+        
+        racir_df <- data.frame(Plantname = plant_name, RampRate = pattern, Method="RACiR" ,Vcmax25 = NA, SE = NA) %>% 
+          bind_rows(racir_df,.)
+        
+        next}
+     } else {
+        
+        # モデルが正常に作成された場合の処理
+        for (m in seq_along(data_der)) {
+          file <- data_der[m]
+          data_data <- read_6800(file)
+          names(data_data) <- make.unique(names(data_data))
+          
+          # 面積を修正
+          area <- area_file %>% 
+            filter(leaf == plant_name) %>% 
+            pull(area_m2)
+          
+          data_data <- fixarea_6800(data_data, area)
+          
+          plant_name <- str_extract(
+            file,
+            paste0("[^/]+(?=_", pattern, "$)")  # ここで ) を足す
+          )
+          
+          # calibrationデータで取ったCO2_rの範囲のデータを取得
+          data_leaf <- data_data %>% 
+            select(obs, A, Ci, CO2_r, Tleaf, E, gtc, Ca) %>% 
+            filter(CO2_r >= min(filtered_data$CO2_r, na.rm = T) & CO2_r<=max(filtered_data$CO2_r, na.rm = T))   
+          #filter(CO2_r <=380 & CO2_r>=90) %>% 
+          #filter(obs >=10)
+          
+          
+          # calの式で補正
+          predicted_A <- predict(quadratic_model, newdata = data.frame(CO2_r = data_leaf$CO2_r))
+          data_leaf$Corr <- predicted_A
+          data_leaf$Aleaf <- data_leaf$A-data_leaf$Corr
+          data_leaf$Ci <- ((data_leaf$gtc-(data_leaf$E/2))*data_leaf$Ca-data_leaf$Aleaf)/(data_leaf$gtc+data_leaf$E/2)
+          data_leaf$A <- data_leaf$Aleaf
+          
+          t <- mean(data_leaf$Tleaf)
+          
+          area <- area_file %>% 
+            filter(leaf == plant_name) %>% 
+            pull(area_m2)
+          
+          fixed_ACi_data <- fixarea_6800(data_leaf, area)
+          
+          
+          # Vcmax推定
+          model1 <- nlsLM(A ~ Vcmax*(Ci-g(t))/(Ci+Kc(t)*(1+O2/Ko(t)))-Rd, data = data_leaf, start=c(Vcmax=50, Rd=0.8), control = nls.control(maxiter = 100))
+          Vcmax <- coef(model1)[1]
+          Rd <- coef(model1)[2]
+          
+          
+          # デーらフレームに結果を保存
+          racir_df <- data.frame(Plantname = plant_name, RampRate = pattern, Method="RACiR" ,Vcmax25 = Vcmax/Vc(t), SE = NA) %>% 
+            bind_rows(racir_df,.)
+          
+          
+          # グラフ保存
+          racir_plot<-
+            plot_list[[m]]+
+            geom_point(data = data_leaf, aes(x=Ci, y=A), colour="red", alpha=0.6)+
+            ggtitle(paste(plant_name, "  ACi  &  RACiR", pattern))
+          
+        
+        } 
+      }
+    
+    }
+  }
+  
+  
+  
+  
+  
+  
+  
+  
+  
+
+
+
+
+
 
 
 
